@@ -28,8 +28,8 @@ try:
         'build_ui': build_ui,
         'build': BuildCommand
     }
-    console_scripts.extend('dexbot-gui = dexbot.gui:main')
-    install_requires.extend(["pyqt-distutils"])
+    console_scripts.append('dexbot-gui = dexbot.gui:main')
+    install_requires.append("pyqt-distutils")
 except BaseException as e:
     print("GUI not available: {}".format(e))
 
