@@ -112,6 +112,21 @@ class BaseStrategy(Storage, StateMachine, Events):
             return base_config
         return []
 
+    @classmethod
+    def check_config(cls, config, essential_fields=["account", "market", "fee_asset"]):
+        """False if config is not valid
+        descendants can override if they have unusual connfigurations
+        """
+        config_fields = set(i[0] for i in cls.configure(True))
+        for essential_field in essential_fields:
+            if essential_field in config_fields and essential_field not in config:
+                log_workers.critical("Worker has no {}".format(essential_field), extra={
+                    'worker_name': workername, 'account': config.get('account', 'unknown'),
+                    'market': config.get('market', 'unknown'), 'is_disabled': (lambda: True)
+                })
+                return False
+        return True
+
     def __init__(
         self,
         name,
@@ -160,15 +175,17 @@ class BaseStrategy(Storage, StateMachine, Events):
             self.config = config = Config.get_worker_config_file(name)
 
         self.worker = config["workers"][name]
-        self._account = Account(
-            self.worker["account"],
-            full=True,
-            bitshares_instance=self.bitshares
-        )
-        self._market = Market(
-            config["workers"][name]["market"],
-            bitshares_instance=self.bitshares
-        )
+        if "account" in self.worker:
+            self._account = Account(
+                self.worker["account"],
+                full=True,
+                bitshares_instance=self.bitshares
+            )
+        if "market" in self.worker:
+            self._market = Market(
+                config["workers"][name]["market"],
+                bitshares_instance=self.bitshares
+            )
 
         # Recheck flag - Tell the strategy to check for updated orders
         self.recheck_orders = False
@@ -194,14 +211,24 @@ class BaseStrategy(Storage, StateMachine, Events):
         self.log = logging.LoggerAdapter(
             logging.getLogger('dexbot.per_worker'),
             {'worker_name': name,
-             'account': self.worker['account'],
-             'market': self.worker['market'],
+             'account': ",".join(list(self.get_accounts())),
+             'market': ",".join(list(self.get_markets())),
              'is_disabled': lambda: self.disabled}
         )
 
         self.orders_log = logging.LoggerAdapter(
             logging.getLogger('dexbot.orders_log'), {}
         )
+
+    def get_markets(self):
+        """return the set of markets the worker is interested in
+        """
+        return {self.worker["market"]}
+
+    def get_accounts(self):
+        """return the set of accounts the worker is interested in
+        """
+        return {self.worker["account"]}
 
     def _calculate_center_price(self, suppress_errors=False):
         ticker = self.market.ticker()

@@ -57,31 +57,21 @@ class WorkerInfrastructure(threading.Thread):
         self.config_lock.release()
 
     def init_single_worker(self, workername, worker, config):
-        if "account" not in worker:
-            log_workers.critical("Worker has no account", extra={
-                'worker_name': workername, 'account': 'unknown',
-                'market': 'unknown', 'is_disabled': (lambda: True)
-            })
-            return
-        if "market" not in worker:
-            log_workers.critical("Worker has no market", extra={
-                'worker_name': workername, 'account': worker['account'],
-                'market': 'unknown', 'is_disabled': (lambda: True)
-            })
-            return
         try:
             strategy_class = getattr(
                 importlib.import_module(worker["module"]),
                 'Strategy'
             )
+            if not strategy_class.check_config(config["workers"][workername]):
+                return
             self.workers[workername] = strategy_class(
                 config=config,
                 name=workername,
                 bitshares_instance=self.bitshares,
                 view=self.view
             )
-            self.markets.add(worker['market'])
-            self.accounts.add(worker['account'])
+            self.markets |= self.workers[workername].get_markets()
+            self.accounts |= self.workers[workername].get_accounts()
         except BaseException:
             log_workers.exception("Worker initialisation", extra={
                 'worker_name': workername, 'account': worker['account'],
@@ -122,8 +112,8 @@ class WorkerInfrastructure(threading.Thread):
                     worker.check_orders()
                 else:
                     worker.log.warning("no check_orders() method")
-            self.markets.add(newconfig["workers"][workername]['market'])
-            self.accounts.add(newconfig["workers"][workername]["account"])
+            self.markets |= self.workers[workername].get_markets()
+            self.accounts |= self.workers[workername].get_accounts()
         self.config = newconfig
         self.config_lock.release()
 
@@ -180,7 +170,7 @@ class WorkerInfrastructure(threading.Thread):
             if self.workers[worker_name].disabled:
                 self.workers[worker_name].log.debug('Worker "{}" is disabled'.format(worker_name))
                 continue
-            if worker["market"] == data.market:
+            if data.market in list(self.workers[worker_name].get_markets()):
                 try:
                     self.workers[worker_name].onMarketUpdate(data)
                 except Exception as e:
@@ -198,7 +188,7 @@ class WorkerInfrastructure(threading.Thread):
             if self.workers[worker_name].disabled:
                 self.workers[worker_name].log.info('Worker "{}" is disabled'.format(worker_name))
                 continue
-            if worker["account"] == account["name"]:
+            if account["name"] in self.workers[worker_name].get_accounts():
                 try:
                     self.workers[worker_name].onAccount(account_update)
                 except Exception as e:
@@ -228,15 +218,17 @@ class WorkerInfrastructure(threading.Thread):
         """
         if worker_name and len(self.workers) > 1:
             # Kill only the specified worker
-            self.remove_market(worker_name)
             with self.config_lock:
-                account = self.config['workers'][worker_name]['account']
                 self.config['workers'].pop(worker_name)
-
-            self.accounts.remove(account)
             if pause:
                 self.workers[worker_name].pause()
             self.workers.pop(worker_name, None)
+            # re-compute accounts and markets
+            self.markets = set()
+            self.accounts = set()
+            for worker in self.workers.values():
+                self.markets |= worker.get_markets()
+                self.accounts |= worker.get_accounts()
             self.update_notify()
         else:
             # Kill all of the workers
@@ -252,18 +244,6 @@ class WorkerInfrastructure(threading.Thread):
         else:
             for worker in self.workers:
                 self.workers[worker].purge()
-
-    def remove_market(self, worker_name):
-        """ Remove the market only if the worker is the only one using it
-        """
-        with self.config_lock:
-            market = self.config['workers'][worker_name]['market']
-            for name, worker in self.config['workers'].items():
-                if market == worker['market']:
-                    break  # Found the same market, do nothing
-            else:
-                # No markets found, safe to remove
-                self.markets.remove(market)
 
     @staticmethod
     def remove_offline_worker(config, worker_name, bitshares_instance):
