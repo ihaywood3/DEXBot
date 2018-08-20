@@ -79,9 +79,11 @@ class Strategy(BaseStrategy):
 
     def check_at_price(self, price):
         """True if no order in self.orderlist at this price"""
+        self.log.debug("check_at_price for {}".format(price))
         for o in self.orders:
             # "within 0.1% means equal" as slight errors creep in due to rounding
             if abs(o['price']-price)/price < 0.001:
+                self.log.debug("check_at_price matched order {}".format(repr(o)))
                 return False
         return True
 
@@ -241,8 +243,9 @@ class Strategy(BaseStrategy):
         delta = time.time() - self.last_check
 
         # Only allow to check orders whether minimal time passed
-        if delta > CHECK_MIN_TIME:
-            self.reassess()
+        # if delta > CHECK_MIN_TIME: run every market event for now
+        self.log.debug("reassess()")
+        self.reassess()
 
     @classmethod
     def get_required_assets(cls, *args, **kwargs):
